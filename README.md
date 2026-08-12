@@ -32,7 +32,7 @@ config/runtime-config.local.json
 config/runtime-config.json
 ```
 
-公共配置保持自动判断：本地 `localhost` 使用 `http://localhost:4001/api`，其他环境使用同源 `/api`。
+公共配置明确指向 develop 环境，服务器地址由 `config/runtime-config.json` 提供；代码中不再内置任何服务器地址。
 
 朋友如果要在本地运行客户端、但连接线上测试服务，可以复制示例：
 
@@ -42,6 +42,16 @@ cp config/runtime-config.local.example.json \
 ```
 
 然后按需修改 `apiBaseUrl`。启动 Cocos 后，程序会按上述优先级选择配置；不要把本机文件加入 Git。
+
+如果要连接本机服务，可以将私有配置改为：
+
+```json
+{
+  "enabled": true,
+  "environment": "develop",
+  "apiBaseUrl": "http://localhost:4001/api"
+}
+```
 
 本地配置支持开关：
 
@@ -53,4 +63,4 @@ cp config/runtime-config.local.example.json \
 }
 ```
 
-当 `enabled` 为 `false` 时，程序会跳过本地配置并使用公共配置。生产环境本地配置文件 `runtime-config.production.local.json` 默认已关闭，同样不会提交到 Git。
+当 `enabled` 为 `false` 时，程序会跳过该本地配置并使用下一个配置。所有生效配置都必须填写 `apiBaseUrl`；生产环境本地配置文件 `runtime-config.production.local.json` 默认已关闭，同样不会提交到 Git。

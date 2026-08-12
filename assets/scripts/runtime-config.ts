@@ -4,14 +4,6 @@ export type RuntimeConfig = {
   apiBaseUrl?: string;
 };
 
-function autoApiBaseUrl(): string {
-  if (typeof location !== 'undefined'
-    && (location.hostname === 'localhost' || location.hostname === '127.0.0.1')) {
-    return 'http://localhost:4001/api';
-  }
-  return '/api';
-}
-
 function loadJson(path: string): Promise<RuntimeConfig> {
   return fetch(`${path}.json`, { cache: 'no-store' }).then(async (response) => {
     if (!response.ok) {
@@ -38,6 +30,7 @@ async function loadEnabledConfig(path: string, label: string): Promise<RuntimeCo
 /**
  * 配置优先级：production 私有配置 -> local 私有配置 -> 公共配置。
  * 前两个配置不存在或 enabled=false 时，都视为未生效并继续尝试下一个。
+ * 公共配置也必须提供 apiBaseUrl；服务器地址不在代码中兜底。
  */
 export async function loadRuntimeConfig(): Promise<Required<RuntimeConfig>> {
   const productionConfig = await loadEnabledConfig(
@@ -55,13 +48,16 @@ export async function loadRuntimeConfig(): Promise<Required<RuntimeConfig>> {
       config = await loadJson('config/runtime-config');
       console.info('[BHGT][Config] loaded shared runtime config');
     } catch (error) {
-      console.warn('[BHGT][Config] shared runtime config unavailable; using automatic defaults', error);
-      config = {};
+      throw new Error('[BHGT][Config] no usable runtime configuration found');
     }
   }
 
+  if (!config.apiBaseUrl) {
+    throw new Error('[BHGT][Config] apiBaseUrl is required; configure it in config/*.json');
+  }
+
   return {
-    environment: config.environment || 'auto',
-    apiBaseUrl: config.apiBaseUrl || autoApiBaseUrl(),
+    environment: config.environment || 'develop',
+    apiBaseUrl: config.apiBaseUrl,
   };
 }

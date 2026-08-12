@@ -24,7 +24,7 @@ const { ccclass } = _decorator;
 
 @ccclass('BHGTMain')
 export class BHGTMain extends Component {
-  private apiBaseUrl = '/api';
+  private apiBaseUrl = '';
   private isDevelopment = false;
   private statusLabel!: Label;
   private loginButton!: Button;

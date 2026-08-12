@@ -1,4 +1,5 @@
 {
-  "environment": "auto",
-  "apiBaseUrl": ""
+  "enabled": true,
+  "environment": "develop",
+  "apiBaseUrl": "https://develop.server.bhgt.sixonehub.site/api"
 }
