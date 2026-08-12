@@ -1,0 +1,17 @@
+# Cocos Creator generated directories
+library/
+temp/
+build/
+local/
+logs/
+node_modules/
+.DS_Store
+
+# Cocos generated/editor logs
+*.log
+
+# Per-machine runtime override: never commit this file or its Cocos metadata.
+assets/resources/config/runtime-config.local.json
+assets/resources/config/runtime-config.local.json.meta
+assets/resources/config/runtime-config.*.local.json
+assets/resources/config/runtime-config.*.local.json.meta
