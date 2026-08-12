@@ -1,5 +1,3 @@
-import { JsonAsset, resources } from 'cc';
-
 export type RuntimeConfig = {
   enabled?: boolean;
   environment?: string;
@@ -15,14 +13,11 @@ function autoApiBaseUrl(): string {
 }
 
 function loadJson(path: string): Promise<RuntimeConfig> {
-  return new Promise((resolve, reject) => {
-    resources.load(path, JsonAsset, (error, asset) => {
-      if (error || !asset) {
-        reject(error || new Error(`runtime config not found: ${path}`));
-        return;
-      }
-      resolve((asset.json || {}) as RuntimeConfig);
-    });
+  return fetch(`${path}.json`, { cache: 'no-store' }).then(async (response) => {
+    if (!response.ok) {
+      throw new Error(`runtime config not found: ${path}`);
+    }
+    return (await response.json()) as RuntimeConfig;
   });
 }
 
