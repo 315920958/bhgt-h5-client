@@ -19,6 +19,8 @@ import {
 import { createPlatformAuth, DeviceQrCode } from './platform-auth';
 import { clearPlayerToken, getPlayerToken, setPlayerToken } from './auth-storage';
 import { loadRuntimeConfig } from './runtime-config';
+import { apiRequest } from './api-request';
+import { reportClientDebug } from './client-debug';
 
 const { ccclass } = _decorator;
 
@@ -47,17 +49,53 @@ export class BHGTMain extends Component {
   }
 
   private async initialize(): Promise<void> {
-    const config = await loadRuntimeConfig();
+    console.info('[BHGT][Auth] initialize started');
+    let config;
+    try {
+      config = await loadRuntimeConfig();
+    } catch (error) {
+      console.error('[BHGT][Config] runtime configuration initialization failed', error);
+      this.statusLabel.string = '运行配置加载失败，请查看控制台日志';
+      reportClientDebug('', {
+        event: 'runtime-config-failed',
+        details: { error: String(error) },
+      });
+      return;
+    }
     this.apiBaseUrl = config.apiBaseUrl;
     const isLocalPreview = typeof location !== 'undefined'
       && (location.hostname === 'localhost' || location.hostname === '127.0.0.1');
-    this.isDevelopment = config.environment === 'development'
+    this.isDevelopment = config.environment === 'develop'
+      || config.environment === 'development'
       || config.environment === 'online-test'
+      || config.environment === 'test'
       || isLocalPreview
       || (typeof location !== 'undefined' && location.hostname.startsWith('develop.'));
     console.info('[BHGT][Config] runtime config ready', {
       environment: config.environment,
       apiBaseUrl: this.apiBaseUrl,
+    });
+    const tap = (globalThis as typeof globalThis & { tap?: { getAppBaseInfo?: () => { enableDebug?: boolean; SDKVersion?: string } } }).tap;
+    const appInfo = tap?.getAppBaseInfo?.();
+    console.info('[BHGT][Debug] runtime diagnostics', {
+      environment: config.environment,
+      tapPresent: Boolean(tap),
+      tapLoginType: typeof (tap as any)?.login,
+      tapRequestType: typeof (tap as any)?.request,
+      tapEnableDebug: appInfo?.enableDebug,
+      tapSdkVersion: appInfo?.SDKVersion,
+      vConsoleNote: '请在TapTap小游戏菜单开启“日志”后重启，容器才显示vConsole',
+    });
+    reportClientDebug(this.apiBaseUrl, {
+      event: 'client-initialized',
+      details: {
+        environment: config.environment,
+        tapPresent: Boolean(tap),
+        tapLoginType: typeof (tap as any)?.login,
+        tapRequestType: typeof (tap as any)?.request,
+        tapEnableDebug: appInfo?.enableDebug,
+        tapSdkVersion: appInfo?.SDKVersion,
+      },
     });
     this.loginButton.interactable = true;
     this.statusLabel.string = '请选择 TapTap 登录进入游戏';
@@ -110,7 +148,15 @@ export class BHGTMain extends Component {
     return label;
   }
 
-  private addButton(root: Node, text: string, x: number, y: number, width: number, height: number): Button {
+  private addButton(
+    root: Node,
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    fontSize = 22,
+  ): Button {
     const node = new Node(text);
     node.parent = root;
     node.setPosition(x, y, 0);
@@ -128,8 +174,8 @@ export class BHGTMain extends Component {
     labelTransform.setContentSize(width, height);
     const label = labelNode.addComponent(Label);
     label.string = text;
-    label.fontSize = 22;
-    label.lineHeight = 28;
+    label.fontSize = fontSize;
+    label.lineHeight = fontSize + 6;
     label.color = Color.WHITE;
     label.horizontalAlign = Label.HorizontalAlign.CENTER;
     label.verticalAlign = Label.VerticalAlign.CENTER;
@@ -158,6 +204,7 @@ export class BHGTMain extends Component {
     this.isLoggingIn = true;
     this.loginButton.interactable = false;
     console.info('[BHGT] TapTap login clicked');
+    reportClientDebug(this.apiBaseUrl, { event: 'login-clicked' });
     this.statusLabel.string = '正在认证信息...';
     try {
       const result = await createPlatformAuth().login({
@@ -175,6 +222,10 @@ export class BHGTMain extends Component {
         platform: result.platform,
         credentialPresent: 'code' in result ? Boolean(result.code) : Boolean(result.auth),
       });
+      reportClientDebug(this.apiBaseUrl, {
+        event: 'platform-login-returned',
+        details: { platform: result.platform, credentialPresent: 'code' in result ? Boolean(result.code) : Boolean(result.auth) },
+      });
       this.statusLabel.string = 'TapTap 登录成功，正在读取角色...';
       let auth: string;
       let nickname = '';
@@ -184,10 +235,15 @@ export class BHGTMain extends Component {
         nickname = result.nickname;
         avatar = result.avatar;
       } else {
-        const loginResponse = await fetch(`${this.apiBaseUrl}/auth/taptap-login`, {
+        const loginResponse = await apiRequest(`${this.apiBaseUrl}/auth/taptap-login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ code: result.code }),
+          apiBaseUrl: this.apiBaseUrl,
+        });
+        console.info('[BHGT][Auth] backend taptap-login response', {
+          status: loginResponse.status,
+          ok: loginResponse.ok,
         });
         const loginBody = await loginResponse.json() as {
           auth?: string;
@@ -212,6 +268,10 @@ export class BHGTMain extends Component {
       this.applyRoleStatus(role.hasRole);
       console.info('[BHGT] Real TapTap authentication complete', { platform: result.platform, role });
     } catch (error) {
+      reportClientDebug(this.apiBaseUrl, {
+        event: 'login-flow-failed',
+        details: { error: error instanceof Error ? error.message : String(error) },
+      });
       console.error('[BHGT][Auth] login flow failed', error);
       this.hideQrCode();
       this.loginButton.node.active = true;
@@ -224,6 +284,7 @@ export class BHGTMain extends Component {
     const auth = getPlayerToken();
     if (!auth) {
       console.info('[BHGT][Auth] no stored player token; waiting for TapTap login');
+      this.statusLabel.string = '请选择 TapTap 登录进入游戏';
       return;
     }
 
@@ -231,8 +292,16 @@ export class BHGTMain extends Component {
     this.statusLabel.string = '正在恢复登录...';
     console.info('[BHGT][Auth] validating stored player token');
     try {
-      const response = await fetch(`${this.apiBaseUrl}/auth/session`, {
+      console.info('[BHGT][Auth] requesting session validation', {
+        apiBaseUrl: this.apiBaseUrl,
+      });
+      const response = await apiRequest(`${this.apiBaseUrl}/auth/session`, {
         headers: { Authorization: `Bearer ${auth}` },
+        apiBaseUrl: this.apiBaseUrl,
+      });
+      console.info('[BHGT][Auth] session validation response received', {
+        status: response.status,
+        ok: response.ok,
       });
       const body = await response.json() as {
         errCode?: number;
@@ -244,8 +313,16 @@ export class BHGTMain extends Component {
         };
       };
       const session = body.MESSAGE_BODY;
+      console.info('[BHGT][Auth] stored token validation response', {
+        httpStatus: response.status,
+        errCode: body.errCode,
+        hasSession: Boolean(session),
+        hasTapTapBinding: Boolean(session?.hasTapTapBinding),
+      });
       if (!response.ok || body.errCode || !session?.hasTapTapBinding) {
-        throw new Error(body.message || '本地登录已失效');
+        const error = new Error(body.message || '本地登录校验失败') as Error & { code?: number };
+        error.code = body.errCode;
+        throw error;
       }
 
       this.loginButton.node.active = false;
@@ -257,16 +334,27 @@ export class BHGTMain extends Component {
       this.applyRoleStatus(role.hasRole);
       console.info('[BHGT][Auth] stored player token restored', { hasRole: role.hasRole });
     } catch (error) {
-      clearPlayerToken();
+      const errorCode = (error as Error & { code?: number })?.code;
+      const tokenDefinitelyInvalid = errorCode === 10002
+        || errorCode === 10003
+        || errorCode === 401
+        || errorCode === 403;
+      if (tokenDefinitelyInvalid) {
+        clearPlayerToken();
+        console.warn('[BHGT][Auth] stored player token rejected and cleared', { errorCode });
+      } else {
+        console.warn('[BHGT][Auth] stored player token validation failed; kept for retry', error);
+      }
       this.loginButton.node.active = true;
       this.loginButton.interactable = true;
-      this.statusLabel.string = '登录已失效，请重新使用 TapTap 登录';
-      console.warn('[BHGT][Auth] stored player token rejected and cleared', error);
+      this.statusLabel.string = tokenDefinitelyInvalid
+        ? '登录已失效，请重新使用 TapTap 登录'
+        : '暂时无法恢复登录，请稍后重试';
     }
   }
 
   private async loadRole(auth: string): Promise<{ hasRole: boolean }> {
-    const response = await fetch(`${this.apiBaseUrl}/game/role`, {
+    const response = await apiRequest(`${this.apiBaseUrl}/game/role`, {
       headers: { Authorization: `Bearer ${auth}` },
     });
     const body = await response.json() as {
@@ -326,7 +414,7 @@ export class BHGTMain extends Component {
   }
 
   private async requestCurrentRole(reset = false): Promise<any> {
-    const response = await fetch(
+    const response = await apiRequest(
       reset ? `${this.apiBaseUrl}/game/current-node/reset` : `${this.apiBaseUrl}/game/role`,
       {
         method: reset ? 'POST' : 'GET',
@@ -396,9 +484,10 @@ export class BHGTMain extends Component {
       this.addLabel(page, '此节点当前没有可用选项', 0, 48, 16, new Color(183, 170, 150, 255));
     }
 
-    const nodeStatus = this.addLabel(page, '', 0, -270, 14, new Color(143, 214, 198, 255));
+    const debugButtonY = -size.height / 2 + 38;
+    const nodeStatus = this.addLabel(page, '', 0, debugButtonY + 42, 14, new Color(143, 214, 198, 255));
     if (this.isDevelopment) {
-      const reset = this.addButton(page, '重置当前节点（开发）', 0, -205, Math.min(300, size.width * 0.78), 48);
+      const reset = this.addButton(page, '重置节点', -82, debugButtonY, 140, 36, 15);
       reset.node.on(Button.EventType.CLICK, async () => {
         reset.interactable = false;
         nodeStatus.string = '正在重新生成节点数据...';
@@ -416,7 +505,7 @@ export class BHGTMain extends Component {
       });
     }
 
-    const back = this.addButton(page, '返回首页', 0, -330, 140, 42);
+    const back = this.addButton(page, '返回首页', 82, debugButtonY, 110, 36, 15);
     back.node.on(Button.EventType.CLICK, () => {
       page.destroy();
       this.storyPage = null;
@@ -476,7 +565,7 @@ export class BHGTMain extends Component {
           selectAvatar.interactable = false;
           pageStatus.string = '正在上传头像...';
           try {
-            const response = await fetch(`${this.apiBaseUrl}/game/avatar`, {
+            const response = await apiRequest(`${this.apiBaseUrl}/game/avatar`, {
               method: 'POST',
               headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.currentAuth}` },
               body: JSON.stringify({ dataUrl }),
@@ -560,7 +649,7 @@ export class BHGTMain extends Component {
       submit.interactable = false;
       pageStatus.string = '正在创建角色...';
       try {
-        const response = await fetch(`${this.apiBaseUrl}/game/start`, {
+            const response = await apiRequest(`${this.apiBaseUrl}/game/start`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${this.currentAuth}` },
           body: JSON.stringify({ nickname, gender, avatar: selectedAvatar }),

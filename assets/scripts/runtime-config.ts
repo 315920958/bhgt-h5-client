@@ -1,3 +1,5 @@
+import { JsonAsset, resources } from 'cc';
+
 export type RuntimeConfig = {
   enabled?: boolean;
   environment?: string;
@@ -5,11 +7,17 @@ export type RuntimeConfig = {
 };
 
 function loadJson(path: string): Promise<RuntimeConfig> {
-  return fetch(`${path}.json`, { cache: 'no-store' }).then(async (response) => {
-    if (!response.ok) {
-      throw new Error(`runtime config not found: ${path}`);
-    }
-    return (await response.json()) as RuntimeConfig;
+  return new Promise((resolve, reject) => {
+    console.info(`[BHGT][Config] loading resource: ${path}`);
+    resources.load(path, JsonAsset, (error, asset) => {
+      if (error || !asset) {
+        console.error(`[BHGT][Config] resource load failed: ${path}`, error || 'asset is empty');
+        reject(error || new Error(`runtime config not found: ${path}`));
+        return;
+      }
+      console.info(`[BHGT][Config] resource loaded: ${path}`);
+      resolve((asset.json || {}) as RuntimeConfig);
+    });
   });
 }
 
@@ -22,7 +30,8 @@ async function loadEnabledConfig(path: string, label: string): Promise<RuntimeCo
     }
     console.info(`[BHGT][Config] loaded ${label} config`);
     return config;
-  } catch {
+  } catch (error) {
+    console.warn(`[BHGT][Config] ${label} config unavailable`, error);
     return null;
   }
 }
@@ -53,7 +62,7 @@ export async function loadRuntimeConfig(): Promise<Required<RuntimeConfig>> {
   }
 
   if (!config.apiBaseUrl) {
-    throw new Error('[BHGT][Config] apiBaseUrl is required; configure it in config/*.json');
+    throw new Error('[BHGT][Config] apiBaseUrl is required; configure it in assets/resources/config/*.json');
   }
 
   return {

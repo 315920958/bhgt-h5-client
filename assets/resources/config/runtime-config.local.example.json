@@ -1,5 +1,5 @@
 {
   "enabled": true,
-  "environment": "develop",
+  "environment": "online-test",
   "apiBaseUrl": "https://develop.server.bhgt.sixonehub.site/api"
 }

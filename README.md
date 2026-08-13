@@ -14,34 +14,34 @@
 
 启动时按以下顺序读取配置；前一个配置生效后，后面的配置会被忽略：
 
-1. `config/runtime-config.production.local.json`
-2. `config/runtime-config.local.json`
-3. 公共配置 `config/runtime-config.json`
+1. `assets/resources/config/runtime-config.production.local.json`
+2. `assets/resources/config/runtime-config.local.json`
+3. 公共配置 `assets/resources/config/runtime-config.json`
 
 前两个本地配置文件不存在，或设置了 `"enabled": false`，都会视为未生效并继续读取下一个配置。
 
 日常本地配置文件是：
 
 ```text
-config/runtime-config.local.json
+assets/resources/config/runtime-config.local.json
 ```
 
 该文件已加入 `.gitignore`，不会提交到 Git。没有生效的本地配置时，程序读取公共配置：
 
 ```text
-config/runtime-config.json
+assets/resources/config/runtime-config.json
 ```
 
-公共配置明确指向 develop 环境，服务器地址由 `config/runtime-config.json` 提供；代码中不再内置任何服务器地址。
+公共配置明确指向 develop 环境，服务器地址由 `assets/resources/config/runtime-config.json` 提供；代码中不再内置任何服务器地址。
 
 朋友如果要在本地运行客户端、但连接线上测试服务，可以复制示例：
 
 ```bash
-cp config/runtime-config.local.example.json \
-  config/runtime-config.local.json
+cp assets/resources/config/runtime-config.local.example.json \
+  assets/resources/config/runtime-config.local.json
 ```
 
-然后按需修改 `apiBaseUrl`。启动 Cocos 后，程序会按上述优先级选择配置；不要把本机文件加入 Git。
+然后按需修改 `apiBaseUrl`，让 Cocos 重新编译/构建。启动后，程序会按上述优先级选择配置；不要把本机文件加入 Git。
 
 如果要连接本机服务，可以将私有配置改为：
 

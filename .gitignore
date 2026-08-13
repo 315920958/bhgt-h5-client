@@ -10,7 +10,8 @@ node_modules/
 # Cocos generated/editor logs
 *.log
 
-# Per-machine runtime override: never commit this file or its Cocos metadata.
-config/runtime-config.local.json
-config/runtime-config.production.local.json
-config/runtime-config.*.local.json
+# Per-machine runtime overrides: never commit these files or their Cocos metadata.
+assets/resources/config/runtime-config.local.json
+assets/resources/config/runtime-config.local.json.meta
+assets/resources/config/runtime-config.production.local.json
+assets/resources/config/runtime-config.production.local.json.meta
