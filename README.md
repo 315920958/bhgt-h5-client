@@ -1,66 +1,29 @@
-# BHGT Cocos 客户端
+# 百世千岁 H5 玩家端
 
-这是 BHGT 的 Cocos Creator 3.8.8 2D 项目。
+React + Vite 的独立 H5 玩家端。它不是 Cocos 工程；Cocos 小游戏版本位于独立仓库 `bhgt-cocos-client`。
 
-## 当前结构
+## 登录策略
 
-- `assets/scenes/Main.scene`：2D 主场景，包含 Canvas 与 Camera。
-- `assets/scripts/Main.ts`：代码生成首页界面和 TapTap 登录按钮。
-- `assets/scripts/platform-auth.ts`：Chrome Mock 登录 / TapTap 容器登录适配层。
+1. 如果 TapTap 容器向页面注入了 `globalThis.tap.login`，优先调用真实 `tap.login()`，把一次性 `code` 交给服务端 `/api/auth/taptap-login`。
+2. 普通浏览器没有该对象时，退回服务端的 TapTap 设备码扫码登录。
 
-当前 Chrome / Web Mobile 预览会显示 TapTap 登录按钮；进入 TapTap 小游戏调试容器后，会自动切换为运行时注入的真实 `tap.login()`。
+页面顶部会直接显示运行时探测结果，方便在 TapTap 包体/容器中验证：`tap` 是否存在、`tap.login` 是否为函数。
 
-## 运行环境配置
-
-启动时按以下顺序读取配置；前一个配置生效后，后面的配置会被忽略：
-
-1. `assets/resources/config/runtime-config.production.local.json`
-2. `assets/resources/config/runtime-config.local.json`
-3. 公共配置 `assets/resources/config/runtime-config.json`
-
-前两个本地配置文件不存在，或设置了 `"enabled": false`，都会视为未生效并继续读取下一个配置。
-
-日常本地配置文件是：
-
-```text
-assets/resources/config/runtime-config.local.json
-```
-
-该文件已加入 `.gitignore`，不会提交到 Git。没有生效的本地配置时，程序读取公共配置：
-
-```text
-assets/resources/config/runtime-config.json
-```
-
-公共配置明确指向 develop 环境，服务器地址由 `assets/resources/config/runtime-config.json` 提供；代码中不再内置任何服务器地址。
-
-朋友如果要在本地运行客户端、但连接线上测试服务，可以复制示例：
+## 本地运行
 
 ```bash
-cp assets/resources/config/runtime-config.local.example.json \
-  assets/resources/config/runtime-config.local.json
+npm install
+npm run dev
 ```
 
-然后按需修改 `apiBaseUrl`，让 Cocos 重新编译/构建。启动后，程序会按上述优先级选择配置；不要把本机文件加入 Git。
+默认 API 为 `https://develop.server.bhgt.sixonehub.site/api`。需要切换时，在启动前设置：
 
-如果要连接本机服务，可以将私有配置改为：
-
-```json
-{
-  "enabled": true,
-  "environment": "develop",
-  "apiBaseUrl": "http://localhost:4001/api"
-}
+```bash
+VITE_API_BASE_URL=https://your-api.example.com/api npm run dev
 ```
 
-本地配置支持开关：
+构建：
 
-```json
-{
-  "enabled": false,
-  "environment": "online-test",
-  "apiBaseUrl": "https://线上服务地址/api"
-}
+```bash
+npm run build
 ```
-
-当 `enabled` 为 `false` 时，程序会跳过该本地配置并使用下一个配置。所有生效配置都必须填写 `apiBaseUrl`；生产环境本地配置文件 `runtime-config.production.local.json` 默认已关闭，同样不会提交到 Git。

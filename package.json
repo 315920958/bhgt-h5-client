@@ -1,9 +1,22 @@
 {
-  "name": "bhgt-cocos-client",
-  "type": "2d",
-  "uuid": "f470926f-5ec2-408c-a0b9-859d95def9d0",
-  "creator": {
-    "version": "3.8.8"
+  "name": "bhgt-h5-client",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
   },
-  "version": "3.8.8"
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "typescript": "latest"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
+  }
 }
