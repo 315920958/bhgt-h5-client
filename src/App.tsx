@@ -1,12 +1,37 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
 import { API_BASE_URL, api, ApiError, type PlayerSession, type Role } from './api';
 
 const TOKEN_KEY = 'bhgt.player.token';
 type AuthMode = 'container' | 'device';
 type LoginResult = { auth: string; nickname: string; avatar: string };
+type TapUserInfo = { nickName?: string; avatarUrl?: string };
+type TapUserInfoButton = {
+  onTap: (callback: (result: { userInfo?: TapUserInfo; errMsg?: string }) => void) => void;
+  destroy?: () => void;
+};
 
 function getStoredToken(): string { return localStorage.getItem(TOKEN_KEY) || ''; }
 function authHeader(token: string): HeadersInit { return { Authorization: `Bearer ${token}` }; }
+
+function getTapUserInfoPermission(): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (!window.tap?.getSetting) return resolve(false);
+    window.tap.getSetting({
+      success: (result) => resolve(Boolean(result.authSetting?.['scope.userInfo'])),
+      fail: () => resolve(false),
+    });
+  });
+}
+
+function getTapUserInfo(): Promise<TapUserInfo> {
+  return new Promise((resolve, reject) => {
+    if (!window.tap?.getUserInfo) return reject(new Error('当前容器未提供 tap.getUserInfo'));
+    window.tap.getUserInfo({
+      success: (result) => resolve(result.userInfo || {}),
+      fail: (error) => reject(error),
+    });
+  });
+}
 
 async function deviceCodeLogin(
   onStatus: (text: string) => void,
@@ -68,6 +93,8 @@ export default function App() {
   const [nickname, setNickname] = useState('');
   const [gender, setGender] = useState<'male' | 'female' | 'other'>('other');
   const [qrRows, setQrRows] = useState<string[]>([]);
+  const [profileAuthorization, setProfileAuthorization] = useState('');
+  const tapProfileButtonTarget = useRef<HTMLDivElement | null>(null);
   const authMode: AuthMode = typeof window.tap?.login === 'function' ? 'container' : 'device';
   const diagnostic = useMemo(() => ({ tap: typeof window.tap, login: typeof window.tap?.login, mode: authMode }), [authMode]);
 
@@ -97,6 +124,68 @@ export default function App() {
       setStatus(`恢复登录失败：${error instanceof Error ? error.message : '未知错误'}`);
     });
   }, []);
+
+  useEffect(() => {
+    if (!token || role || !session || session.avatar || authMode !== 'container') return;
+    const tap = window.tap;
+    let destroyed = false;
+    let nativeButton: TapUserInfoButton | undefined;
+
+    const persistProfile = async (profile: TapUserInfo) => {
+      const nicknameFromTapTap = String(profile.nickName || '').trim();
+      const avatarFromTapTap = String(profile.avatarUrl || '').trim();
+      if (!nicknameFromTapTap && !avatarFromTapTap) throw new Error('TapTap 未返回昵称或头像');
+      const result = await api<{ nickname?: string; avatar?: string }>('/auth/taptap-profile', {
+        method: 'POST', headers: authHeader(token), body: JSON.stringify({ nickname: nicknameFromTapTap, avatar: avatarFromTapTap }),
+      });
+      const nextNickname = result.MESSAGE_BODY?.nickname || nicknameFromTapTap || session.nickname;
+      const nextAvatar = result.MESSAGE_BODY?.avatar || avatarFromTapTap;
+      setSession((current) => current ? { ...current, nickname: nextNickname, avatar: nextAvatar } : current);
+      setNickname(nextNickname);
+      setProfileAuthorization('已使用 TapTap 昵称与头像');
+      setStatus('已取得 TapTap 公开资料，请确认道号并创建角色');
+      console.info('[BHGT][Auth] TapTap public profile authorized', { nicknamePresent: Boolean(nextNickname), avatarPresent: Boolean(nextAvatar) });
+    };
+
+    const installNativeButton = () => {
+      const target = tapProfileButtonTarget.current;
+      if (!target || !tap?.createUserInfoButton) {
+        setProfileAuthorization('当前容器未提供头像昵称授权；你仍可直接创建角色');
+        return;
+      }
+      const rect = target.getBoundingClientRect();
+      nativeButton = tap.createUserInfoButton({
+        type: 'text', text: '使用 TapTap 昵称与头像',
+        style: {
+          left: Math.round(rect.left), top: Math.round(rect.top), width: Math.round(rect.width), height: Math.round(rect.height),
+          lineHeight: Math.round(rect.height), backgroundColor: '#31bfac', color: '#ffffff', textAlign: 'center', fontSize: 16, borderRadius: 10,
+        },
+      });
+      nativeButton.onTap(async (result) => {
+        if (destroyed) return;
+        try {
+          if (!result.userInfo) throw new Error(result.errMsg || '未授权 TapTap 公开资料');
+          await persistProfile(result.userInfo);
+        } catch (error) {
+          console.warn('[BHGT][Auth] TapTap public profile authorization not completed', error);
+          setProfileAuthorization('未授权头像昵称；你仍可直接创建角色');
+        }
+      });
+      setProfileAuthorization('可选：使用 TapTap 昵称与头像');
+    };
+
+    void getTapUserInfoPermission().then(async (authorized) => {
+      if (destroyed) return;
+      if (authorized) {
+        try { await persistProfile(await getTapUserInfo()); }
+        catch (error) { console.warn('[BHGT][Auth] existing TapTap profile permission could not be read', error); installNativeButton(); }
+        return;
+      }
+      window.setTimeout(installNativeButton, 0);
+    });
+
+    return () => { destroyed = true; nativeButton?.destroy?.(); };
+  }, [authMode, role, session, token]);
 
   const login = async () => {
     setBusy(true);
@@ -139,7 +228,7 @@ export default function App() {
       <p className="status">{status}</p>
       {qrRows.length > 0 && <div className="qr" aria-label="TapTap 登录二维码">{qrRows.map((row, y) => <div className="qr-row" key={y}>{[...row].map((cell, x) => <i className={cell === '1' ? 'dark' : ''} key={x} />)}</div>)}</div>}
       {!token && <p className="hint">{authMode === 'container' ? '检测到 TapTap 容器，将调用 tap.login()' : '普通浏览器将使用 TapTap 扫码登录'}</p>}
-      {token && !role && <form onSubmit={createRole} className="create"><h2>创建角色</h2><label>道号<input value={nickname} maxLength={20} onChange={(event) => setNickname(event.target.value)} placeholder="请输入你的名字" /></label><div className="gender">{([['male', '男'], ['female', '女'], ['other', '保密']] as const).map(([value, label]) => <button type="button" className={gender === value ? 'chosen' : ''} onClick={() => setGender(value)} key={value}>{label}</button>)}</div><button className="primary" disabled={busy}>开始新游戏</button></form>}
+      {token && !role && <form onSubmit={createRole} className="create"><h2>创建角色</h2>{authMode === 'container' && session && !session.avatar && <><div className="tap-profile-target" ref={tapProfileButtonTarget}>使用 TapTap 昵称与头像</div><p className="profile-hint">{profileAuthorization || '正在检查 TapTap 资料授权…'}<br />授权是可选的；不同意也可以自定义道号。</p></>}<label>道号<input value={nickname} maxLength={20} onChange={(event) => setNickname(event.target.value)} placeholder="请输入你的名字" /></label><div className="gender">{([['male', '男'], ['female', '女'], ['other', '保密']] as const).map(([value, label]) => <button type="button" className={gender === value ? 'chosen' : ''} onClick={() => setGender(value)} key={value}>{label}</button>)}</div><button className="primary" disabled={busy}>开始新游戏</button></form>}
       {role && <section className="node"><p className="eyebrow">{role.node?.code || '当前节点'}</p><h2>{role.node?.title || role.node?.name || '修行开始'}</h2><p>{role.node?.text || '第一个节点正在等待你的选择。'}</p>{(role.node?.buttons || []).map((item, index) => <button className="choice" key={item.code || index}>{item.text || `选项 ${index + 1}`}</button>)}</section>}
       <p className="api">API：{API_BASE_URL}</p>
     </section>
