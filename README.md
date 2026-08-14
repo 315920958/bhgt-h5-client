@@ -27,3 +27,5 @@ VITE_API_BASE_URL=https://your-api.example.com/api npm run dev
 ```bash
 npm run build
 ```
+
+构建完成后，项目根目录会生成 `bhgt-h5-client.zip`；这是已忽略的上传包，不会进入 Git。压缩包内以 `dist/` 为第一层目录，满足上传平台的目录结构要求。

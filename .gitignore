@@ -1,5 +1,6 @@
 node_modules/
 dist/
+bhgt-h5-client.zip
 .DS_Store
 .env.local
 .env.*.local

@@ -14,12 +14,25 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<ApiEnvelope<T>> {
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: { 'Content-Type': 'application/json', ...options.headers },
-  });
+  const url = `${API_BASE_URL}${path}`;
+  const method = options.method || 'GET';
+  console.info('[BHGT][API] request', { method, url: path });
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...options,
+      headers: { 'Content-Type': 'application/json', ...options.headers },
+    });
+  } catch (error) {
+    console.error('[BHGT][API] network failure', { method, url: path, error });
+    throw error;
+  }
   const body = await response.json().catch(() => ({})) as ApiEnvelope<T>;
-  if (!response.ok || body.errCode) throw new ApiError(body.message || `请求失败 (${response.status})`, response.status, body.errCode);
+  console.info('[BHGT][API] response', { method, url: path, status: response.status, ok: response.ok, errCode: body.errCode });
+  if (!response.ok || body.errCode) {
+    console.error('[BHGT][API] request failed', { method, url: path, status: response.status, errCode: body.errCode, message: body.message });
+    throw new ApiError(body.message || `请求失败 (${response.status})`, response.status, body.errCode);
+  }
   return body;
 }
 

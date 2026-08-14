@@ -12,11 +12,13 @@ async function deviceCodeLogin(
   onStatus: (text: string) => void,
   onQrCode: (rows: string[]) => void,
 ): Promise<LoginResult> {
+  console.info('[BHGT][Auth] device-code login entered');
   const start = await api<{ loginId: string; expiresIn: number; interval: number; qrcode_url?: string; qrRows?: string[] }>('/auth/taptap-device/start', { method: 'POST' });
   const payload = start.MESSAGE_BODY;
   if (!payload?.loginId) throw new Error('无法创建 TapTap 扫码登录');
   if (!payload.qrRows?.length) throw new Error('TapTap 未返回登录二维码');
   onQrCode(payload.qrRows);
+  console.info('[BHGT][Auth] device-code QR received', { loginIdPresent: true, expiresIn: payload.expiresIn, qrRows: payload.qrRows.length });
   onStatus('浏览器环境：请使用 TapTap App 扫码确认登录');
   const deadline = Date.now() + payload.expiresIn * 1000;
   const interval = Math.max(2, payload.interval || 2);
@@ -26,6 +28,7 @@ async function deviceCodeLogin(
       method: 'POST', body: JSON.stringify({ loginId: payload.loginId }),
     });
     if (result.MESSAGE_BODY?.status === 'complete' && result.auth) {
+      console.info('[BHGT][Auth] device-code authorization complete');
       return { auth: result.auth, nickname: result.MESSAGE_BODY.nickname || 'TapTap 玩家', avatar: result.MESSAGE_BODY.avatar || '' };
     }
   }
@@ -33,12 +36,26 @@ async function deviceCodeLogin(
 }
 
 async function containerLogin(): Promise<LoginResult> {
-  const code = (await window.tap?.login?.())?.code;
+  console.info('[BHGT][Auth] container login entered', { tapType: typeof window.tap, tapLoginType: typeof window.tap?.login });
+  console.info('[BHGT][Auth] calling tap.login()');
+  const loginResult = await window.tap?.login?.();
+  const code = loginResult?.code;
+  console.info('[BHGT][Auth] tap.login() resolved', {
+    hasCode: Boolean(code),
+    code: code || '',
+    codeLength: code?.length || 0,
+    warning: '一次性登录凭证，仅用于当前真机联调，请勿公开',
+  });
   if (!code) throw new Error('TapTap 容器没有返回登录 code');
-  const result = await api<{ nickname?: string; avatar?: string }>('/auth/taptap-login', {
+  console.info('[BHGT][Auth] sending one-time code to backend', { endpoint: '/auth/taptap-h5-login' });
+  const result = await api<{ nickname?: string; avatar?: string }>('/auth/taptap-h5-login', {
     method: 'POST', body: JSON.stringify({ code }),
   });
   if (!result.auth) throw new Error(result.message || 'TapTap 服务端认证失败');
+  console.info('[BHGT][Auth] backend TapTap authentication complete', {
+    nickname: result.MESSAGE_BODY?.nickname || '',
+    avatarPresent: Boolean(result.MESSAGE_BODY?.avatar),
+  });
   return { auth: result.auth, nickname: result.MESSAGE_BODY?.nickname || 'TapTap 玩家', avatar: result.MESSAGE_BODY?.avatar || '' };
 }
 
@@ -53,6 +70,10 @@ export default function App() {
   const [qrRows, setQrRows] = useState<string[]>([]);
   const authMode: AuthMode = typeof window.tap?.login === 'function' ? 'container' : 'device';
   const diagnostic = useMemo(() => ({ tap: typeof window.tap, login: typeof window.tap?.login, mode: authMode }), [authMode]);
+
+  useEffect(() => {
+    console.info('[BHGT][Auth] runtime diagnostics', diagnostic);
+  }, [diagnostic]);
 
   const loadPlayer = async (activeToken: string) => {
     const [sessionResult, roleResult] = await Promise.all([
@@ -80,6 +101,7 @@ export default function App() {
   const login = async () => {
     setBusy(true);
     try {
+      console.info('[BHGT][Auth] login clicked', { mode: authMode, diagnostic });
       setStatus(authMode === 'container' ? '正在调用 TapTap 容器登录...' : '正在创建扫码登录...');
       const result = authMode === 'container' ? await containerLogin() : await deviceCodeLogin(setStatus, setQrRows);
       localStorage.setItem(TOKEN_KEY, result.auth);
@@ -87,6 +109,7 @@ export default function App() {
       setQrRows([]);
       await loadPlayer(result.auth);
     } catch (error) {
+      console.error('[BHGT][Auth] login flow failed', error);
       setStatus(`登录失败：${error instanceof Error ? error.message : '未知错误'}`);
     } finally { setBusy(false); }
   };
