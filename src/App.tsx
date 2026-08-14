@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { API_BASE_URL, api, ApiError, type PlayerSession, type Role } from './api';
+import { API_BASE_URL, api, ApiError, setApiAuthToken, showToast, type PlayerSession, type Role } from './api';
 
 const TOKEN_KEY = 'bhgt.player.token';
 type AuthMode = 'container' | 'device';
@@ -11,7 +11,10 @@ type TapUserInfoButton = {
 };
 
 function getStoredToken(): string { return localStorage.getItem(TOKEN_KEY) || ''; }
-function authHeader(token: string): HeadersInit { return { Authorization: `Bearer ${token}` }; }
+function errorMessage(error: unknown): string { return error instanceof Error ? error.message : '发生未知错误'; }
+function reportError(error: unknown): void {
+  if (!(error instanceof ApiError && error.toastReported)) showToast(errorMessage(error));
+}
 
 function getTapUserInfoPermission(): Promise<boolean> {
   return new Promise((resolve) => {
@@ -94,6 +97,7 @@ export default function App() {
   const [gender, setGender] = useState<'male' | 'female' | 'other'>('other');
   const [qrRows, setQrRows] = useState<string[]>([]);
   const [profileAuthorization, setProfileAuthorization] = useState('');
+  const [toasts, setToasts] = useState<Array<{ id: number; message: string }>>([]);
   const tapProfileButtonTarget = useRef<HTMLDivElement | null>(null);
   const authMode: AuthMode = typeof window.tap?.login === 'function' ? 'container' : 'device';
   const diagnostic = useMemo(() => ({ tap: typeof window.tap, login: typeof window.tap?.login, mode: authMode }), [authMode]);
@@ -102,10 +106,24 @@ export default function App() {
     console.info('[BHGT][Auth] runtime diagnostics', diagnostic);
   }, [diagnostic]);
 
+  useEffect(() => {
+    const onToast = (event: Event) => {
+      const message = (event as CustomEvent<{ message?: string }>).detail?.message || '操作失败，请稍后重试';
+      const id = Date.now() + Math.random();
+      setToasts((items) => [...items, { id, message }].slice(-3));
+      window.setTimeout(() => setToasts((items) => items.filter((item) => item.id !== id)), 3200);
+    };
+    window.addEventListener('bhgt:toast', onToast);
+    return () => window.removeEventListener('bhgt:toast', onToast);
+  }, []);
+
+  useEffect(() => { setApiAuthToken(token); }, [token]);
+
   const loadPlayer = async (activeToken: string) => {
+    setApiAuthToken(activeToken);
     const [sessionResult, roleResult] = await Promise.all([
-      api<PlayerSession>('/auth/session', { headers: authHeader(activeToken) }),
-      api<{ hasRole: boolean; role: Role | null }>('/game/role', { headers: authHeader(activeToken) }),
+      api<PlayerSession>('/auth/session'),
+      api<{ hasRole: boolean; role: Role | null }>('/game/role'),
     ]);
     const nextSession = sessionResult.MESSAGE_BODY;
     if (!nextSession?.hasTapTapBinding) throw new Error('本地登录态不包含 TapTap 身份');
@@ -119,9 +137,9 @@ export default function App() {
     if (!token) { setStatus('请选择 TapTap 登录进入游戏'); return; }
     loadPlayer(token).catch((error) => {
       if (error instanceof ApiError && [10002, 10003].includes(error.code || 0)) {
-        localStorage.removeItem(TOKEN_KEY); setToken('');
+        localStorage.removeItem(TOKEN_KEY); setApiAuthToken(''); setToken('');
       }
-      setStatus(`恢复登录失败：${error instanceof Error ? error.message : '未知错误'}`);
+      setStatus(`恢复登录失败：${errorMessage(error)}`);
     });
   }, []);
 
@@ -136,7 +154,7 @@ export default function App() {
       const avatarFromTapTap = String(profile.avatarUrl || '').trim();
       if (!nicknameFromTapTap && !avatarFromTapTap) throw new Error('TapTap 未返回昵称或头像');
       const result = await api<{ nickname?: string; avatar?: string }>('/auth/taptap-profile', {
-        method: 'POST', headers: authHeader(token), body: JSON.stringify({ nickname: nicknameFromTapTap, avatar: avatarFromTapTap }),
+        method: 'POST', body: JSON.stringify({ nickname: nicknameFromTapTap, avatar: avatarFromTapTap }),
       });
       const nextNickname = result.MESSAGE_BODY?.nickname || nicknameFromTapTap || session.nickname;
       const nextAvatar = result.MESSAGE_BODY?.avatar || avatarFromTapTap;
@@ -168,6 +186,7 @@ export default function App() {
           await persistProfile(result.userInfo);
         } catch (error) {
           console.warn('[BHGT][Auth] TapTap public profile authorization not completed', error);
+          reportError(error);
           setProfileAuthorization('未授权头像昵称；你仍可直接创建角色');
         }
       });
@@ -199,7 +218,8 @@ export default function App() {
       await loadPlayer(result.auth);
     } catch (error) {
       console.error('[BHGT][Auth] login flow failed', error);
-      setStatus(`登录失败：${error instanceof Error ? error.message : '未知错误'}`);
+      reportError(error);
+      setStatus(`登录失败：${errorMessage(error)}`);
     } finally { setBusy(false); }
   };
 
@@ -209,17 +229,18 @@ export default function App() {
     setBusy(true); setStatus('正在创建角色...');
     try {
       const result = await api<{ role: Role }>('/game/start', {
-        method: 'POST', headers: authHeader(token), body: JSON.stringify({ nickname: nickname.trim(), gender, avatar: session?.avatar || '' }),
+        method: 'POST', body: JSON.stringify({ nickname: nickname.trim(), gender, avatar: session?.avatar || '' }),
       });
       setRole(result.MESSAGE_BODY?.role || null);
       setStatus('角色创建成功，已进入第一个节点');
-    } catch (error) { setStatus(`创建角色失败：${error instanceof Error ? error.message : '未知错误'}`); }
+    } catch (error) { reportError(error); setStatus(`创建角色失败：${errorMessage(error)}`); }
     finally { setBusy(false); }
   };
 
-  const logout = () => { localStorage.removeItem(TOKEN_KEY); setToken(''); setRole(null); setSession(null); setStatus('已退出登录'); };
+  const logout = () => { localStorage.removeItem(TOKEN_KEY); setApiAuthToken(''); setToken(''); setRole(null); setSession(null); setStatus('已退出登录'); };
 
   return <main className="app-shell">
+    <div aria-live="polite" style={{ position: 'fixed', zIndex: 10000, left: '50%', top: 18, width: 'min(86vw, 360px)', transform: 'translateX(-50%)', display: 'grid', gap: 8, pointerEvents: 'none' }}>{toasts.map((toast) => <div key={toast.id} style={{ padding: '11px 15px', borderRadius: 10, background: 'rgba(12, 17, 24, .94)', border: '1px solid #4c6472', color: '#f7edcd', boxShadow: '0 8px 26px #0008', textAlign: 'center', fontSize: 14, lineHeight: 1.45 }}>{toast.message}</div>)}</div>
     <section className="card">
       <div className="runtime">容器探测 · tap: {diagnostic.tap} · tap.login: {diagnostic.login}</div>
       <h1>百世千岁</h1><p className="subtitle">一念入局，百世修行</p><p className="description">一段从选择开始的修行旅途</p>
