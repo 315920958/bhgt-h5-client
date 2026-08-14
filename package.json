@@ -7,6 +7,7 @@
     "start": "vite",
     "dev": "vite",
     "build": "tsc -b && vite build && node scripts/package-dist.mjs",
+    "build:test": "tsc -b && vite build --mode test",
     "preview": "vite preview"
   },
   "dependencies": {
