@@ -93,6 +93,14 @@
         "separateEngine": false,
         "highPerformanceMode": false,
         "__version__": "1.0.4"
+      },
+      "1786615399220": {
+        "orientation": "portrait",
+        "appid": "wx6ac3f5090a6b99c5",
+        "buildOpenDataContextTemplate": "",
+        "separateEngine": false,
+        "highPerformanceMode": false,
+        "__version__": "1.0.4"
       }
     },
     "__version__": "1.3.9"
