@@ -10,6 +10,19 @@ export function showToast(message: string): void {
   window.dispatchEvent(new CustomEvent('bhgt:toast', { detail: { message } }));
 }
 
+/** 开发/测试期客户端诊断上报。使用原始 fetch，失败时绝不递归触发 Toast 或新的上报。 */
+export async function reportClientDebug(event: string, details: Record<string, unknown> = {}): Promise<void> {
+  try {
+    await fetch(`${API_BASE_URL}/auth/client-debug`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(authToken ? { Authorization: `Bearer ${authToken}` } : {}) },
+      body: JSON.stringify({ event, details, clientTime: new Date().toISOString(), userAgent: navigator.userAgent }),
+    });
+  } catch (error) {
+    console.warn('[BHGT][ClientDebug] upload failed', { event, error });
+  }
+}
+
 type ApiEnvelope<T> = {
   auth?: string;
   errCode?: number;
@@ -36,6 +49,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<A
     });
   } catch (error) {
     console.error('[BHGT][API] network failure', { method, url: path, error });
+    void reportClientDebug('api-network-failed', { method, path, message: error instanceof Error ? error.message : String(error) });
     const apiError = new ApiError('网络连接失败，请稍后重试');
     apiError.toastReported = true;
     showToast(apiError.message);
@@ -45,6 +59,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<A
   console.info('[BHGT][API] response', { method, url: path, status: response.status, ok: response.ok, errCode: body.errCode });
   if (!response.ok || body.errCode) {
     console.error('[BHGT][API] request failed', { method, url: path, status: response.status, errCode: body.errCode, message: body.message });
+    void reportClientDebug('api-request-failed', { method, path, status: response.status, errCode: body.errCode || 0, message: body.message || '' });
     const apiError = new ApiError(body.message || `请求失败 (${response.status})`, response.status, body.errCode);
     apiError.toastReported = true;
     showToast(apiError.message);

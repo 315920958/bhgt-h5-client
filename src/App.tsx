@@ -1,5 +1,5 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react';
-import { API_BASE_URL, api, ApiError, setApiAuthToken, showToast, type PlayerSession, type Role } from './api';
+import { API_BASE_URL, api, ApiError, reportClientDebug, setApiAuthToken, showToast, type PlayerSession, type Role } from './api';
 
 const TOKEN_KEY = 'bhgt.player.token';
 type AuthMode = 'container' | 'device';
@@ -14,6 +14,9 @@ function getStoredToken(): string { return localStorage.getItem(TOKEN_KEY) || ''
 function errorMessage(error: unknown): string { return error instanceof Error ? error.message : '发生未知错误'; }
 function reportError(error: unknown): void {
   if (!(error instanceof ApiError && error.toastReported)) showToast(errorMessage(error));
+}
+function errorDetails(error: unknown): Record<string, string> {
+  return error instanceof Error ? { message: error.message, stack: error.stack || '' } : { message: String(error) };
 }
 
 async function deviceCodeLogin(
@@ -77,6 +80,7 @@ export default function App() {
   const [gender, setGender] = useState<'male' | 'female' | 'other'>('other');
   const [qrRows, setQrRows] = useState<string[]>([]);
   const [profileAuthorization, setProfileAuthorization] = useState('');
+  const [profileGate, setProfileGate] = useState<'authorize' | 'create'>('authorize');
   const [toasts, setToasts] = useState<Array<{ id: number; message: string }>>([]);
   const tapProfileButtonTarget = useRef<HTMLDivElement | null>(null);
   const authMode: AuthMode = typeof window.tap?.login === 'function' ? 'container' : 'device';
@@ -110,6 +114,9 @@ export default function App() {
     setSession(nextSession);
     setRole(roleResult.MESSAGE_BODY?.role || null);
     setNickname(roleResult.MESSAGE_BODY?.role?.nickname || nextSession.nickname || '');
+    if (!roleResult.MESSAGE_BODY?.hasRole) {
+      setProfileGate(authMode === 'container' && !nextSession.avatar ? 'authorize' : 'create');
+    }
     setStatus(roleResult.MESSAGE_BODY?.hasRole ? '登录成功，可以进入游戏' : '登录成功，请创建角色');
   };
 
@@ -124,7 +131,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!token || role || !session || session.avatar || authMode !== 'container') return;
+    if (!token || role || !session || session.avatar || authMode !== 'container' || profileGate !== 'authorize') return;
     const tap = window.tap;
     let destroyed = false;
     let nativeButton: TapUserInfoButton | undefined;
@@ -140,6 +147,7 @@ export default function App() {
       const nextAvatar = result.MESSAGE_BODY?.avatar || avatarFromTapTap;
       setSession((current) => current ? { ...current, nickname: nextNickname, avatar: nextAvatar } : current);
       setNickname(nextNickname);
+      setProfileGate('create');
       setProfileAuthorization('已使用 TapTap 昵称与头像');
       setStatus('已取得 TapTap 公开资料，请确认道号并创建角色');
       console.info('[BHGT][Auth] TapTap public profile authorized', { nicknamePresent: Boolean(nextNickname), avatarPresent: Boolean(nextAvatar) });
@@ -165,12 +173,22 @@ export default function App() {
         if (destroyed) return;
         console.info('[BHGT][Auth] TapTap public profile button tapped', { hasUserInfo: Boolean(result.userInfo), errMsg: result.errMsg || '' });
         try {
-          if (!result.userInfo) throw new Error(result.errMsg || '未授权 TapTap 公开资料');
+          if (!result.userInfo) {
+            const message = result.errMsg || '未授权 TapTap 公开资料';
+            if (/deny|cancel|拒绝|取消/i.test(message)) {
+              setProfileGate('create');
+              setProfileAuthorization('你选择了暂不授权，请填写角色资料');
+              setStatus('请填写角色资料后开始新游戏');
+              return;
+            }
+            throw new Error(message);
+          }
           await persistProfile(result.userInfo);
         } catch (error) {
           console.warn('[BHGT][Auth] TapTap public profile authorization not completed', error);
+          void reportClientDebug('taptap-profile-authorization-failed', { ...errorDetails(error), tapError: result.errMsg || '', hasUserInfo: Boolean(result.userInfo) });
           reportError(error);
-          setProfileAuthorization('未授权头像昵称；你仍可直接创建角色');
+          setProfileAuthorization('TapTap 资料授权暂不可用，请检查隐私 API 配置后重试');
         }
       });
       setProfileAuthorization('点击按钮后可授权昵称与头像');
@@ -180,7 +198,7 @@ export default function App() {
     window.setTimeout(installNativeButton, 0);
 
     return () => { destroyed = true; nativeButton?.destroy?.(); };
-  }, [authMode, role, session, token]);
+  }, [authMode, profileGate, role, session, token]);
 
   const login = async () => {
     setBusy(true);
@@ -224,7 +242,8 @@ export default function App() {
       <p className="status">{status}</p>
       {qrRows.length > 0 && <div className="qr" aria-label="TapTap 登录二维码">{qrRows.map((row, y) => <div className="qr-row" key={y}>{[...row].map((cell, x) => <i className={cell === '1' ? 'dark' : ''} key={x} />)}</div>)}</div>}
       {!token && <p className="hint">{authMode === 'container' ? '检测到 TapTap 容器，将调用 tap.login()' : '普通浏览器将使用 TapTap 扫码登录'}</p>}
-      {token && !role && <form onSubmit={createRole} className="create"><h2>创建角色</h2>{authMode === 'container' && session && !session.avatar && <><div className="tap-profile-target" ref={tapProfileButtonTarget}>授权 TapTap 资料</div><p className="profile-hint">{profileAuthorization || '等待玩家主动授权…'}<br />授权是可选的；不同意也可以自定义道号。</p></>}<label>道号<input value={nickname} maxLength={20} onChange={(event) => setNickname(event.target.value)} placeholder="请输入你的名字" /></label><div className="gender">{([['male', '男'], ['female', '女'], ['other', '保密']] as const).map(([value, label]) => <button type="button" className={gender === value ? 'chosen' : ''} onClick={() => setGender(value)} key={value}>{label}</button>)}</div><button className="primary" disabled={busy}>开始新游戏</button></form>}
+      {token && !role && profileGate === 'authorize' && <section className="create"><h2>以 TapTap 身份开始</h2><p className="profile-hint">授权后会自动带入你的 TapTap 昵称与头像。</p><div className="tap-profile-target" ref={tapProfileButtonTarget}>授权 TapTap 资料</div><p className="profile-hint">{profileAuthorization || '请点击上方按钮授权'}</p></section>}
+      {token && !role && profileGate === 'create' && <form onSubmit={createRole} className="create"><h2>创建角色</h2><label>道号<input value={nickname} maxLength={20} onChange={(event) => setNickname(event.target.value)} placeholder="请输入你的名字" /></label><div className="gender">{([['male', '男'], ['female', '女'], ['other', '保密']] as const).map(([value, label]) => <button type="button" className={gender === value ? 'chosen' : ''} onClick={() => setGender(value)} key={value}>{label}</button>)}</div><button className="primary" disabled={busy}>开始新游戏</button></form>}
       {role && <section className="node"><p className="eyebrow">{role.node?.code || '当前节点'}</p><h2>{role.node?.title || role.node?.name || '修行开始'}</h2><p>{role.node?.text || '第一个节点正在等待你的选择。'}</p>{(role.node?.buttons || []).map((item, index) => <button className="choice" key={item.code || index}>{item.text || `选项 ${index + 1}`}</button>)}</section>}
       <p className="api">API：{API_BASE_URL}</p>
     </section>
